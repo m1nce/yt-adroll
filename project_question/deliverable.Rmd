@@ -1,0 +1,105 @@
+---
+title: "Measuring the Behavioral Distortion of YouTube's Mid-Roll Ad Threshold"
+subtitle: "A Research Proposal for YouTube Leadership (Ads & Creator Economy)"
+author: "Minchan Kim, Andy Ho, Eva Tang, Ming Lu"
+date: "April 20, 2026"
+output:
+  pdf_document:
+    toc: false
+    number_sections: true
+    latex_engine: xelatex
+geometry: margin=1in
+fontsize: 11pt
+header-includes:
+  - \usepackage{booktabs}
+  - \usepackage{longtable}
+  - \usepackage{array}
+  - \renewcommand{\arraystretch}{1.2}
+---
+
+# Organization
+
+**YouTube** (Alphabet Inc.), specifically the Ads and Creator Economy teams responsible for monetization policy. This research will help leadership understand a second-order effect of one of the platform's longest-standing monetization rules: the minimum video-length threshold for mid-roll advertisements.
+
+# Research Question and Classification
+
+**Research question:** Has YouTube's minimum-length rule for mid-roll ads caused creators to strategically lengthen their videos to cross the eligibility threshold, and if so, how large is the behavioral distortion --- in the aggregate, across creator segments, and in the years since the 2020 policy change?
+
+**Classification:** **Causal**, using a **Regression Discontinuity Design (RDD)**.
+
+**Why this question matters to YouTube:** the threshold is a policy lever with two competing effects. On the one hand, it discourages low-effort short videos from monopolizing mid-roll inventory. On the other hand, it creates an incentive for creators to pad videos --- producing content that is longer than it needs to be, potentially at a cost to viewer satisfaction and watch-time efficiency. If creators are systematically inflating videos to clear the threshold, YouTube's management should know the magnitude of that distortion before deciding whether to keep, remove, or redesign the rule.
+
+**Why RDD fits:** the policy creates a sharp cutoff in video duration (10:00 before July 27, 2020; 8:00 after). A creator who uploads a 7:59 video cannot run mid-roll ads; a creator who uploads an 8:00 video can. Because duration is a choice variable that creators can manipulate *right at the cutoff*, we expect to see statistical "bunching" of videos immediately above the threshold --- a density discontinuity that is the direct footprint of strategic behavior. This is a non-standard but well-established use of RDD: rather than using the cutoff to estimate the effect of *crossing it* on some outcome, we use the density of observations near the cutoff (McCrary, 2008) to estimate the degree to which units *manipulate* their running variable to cross.
+
+The 2020 policy change provides a second, reinforcing natural experiment: if creators respond to monetization incentives, the bunching mass should **migrate from 10:00 to 8:00** on or shortly after July 27, 2020.
+
+# Dataset
+
+**Source:** YouTube Data API v3 (public, free, 10,000 units/day quota), supplemented by publicly available channel lists (e.g., SocialBlade public leaderboards, NoxInfluencer rankings) to construct the channel sample frame.
+
+**Collection plan:** We will pull metadata for all videos uploaded between **January 2018 and December 2023** (30 months before the policy change, 41 months after) from a sample of **\~1,500 English-language creator channels** ranging from 10,000 to 1,000,000 subscribers --- channels large enough to optimize for monetization but small enough that length decisions are made by individual creators, not corporate media operations. We will restrict the sample to content categories where creators genuinely choose video length --- Gaming, People & Blogs, Education, Howto & Style, Entertainment, and Comedy --- and exclude Music, News, and Film & Animation, where length is structurally determined and would contaminate the density test.
+
+## Scope Table
+
+*Generated with AI assistance per the assignment instructions.*
+
+| Attribute | Value |
+|:---|:---|
+| Observations | \~200,000--400,000 videos |
+| Dates covered | January 2018 -- December 2023 |
+| Unit of observation | One video (one row = one YouTube video) |
+| Channels | \~1,500 English-language creator channels (10K--1M subscribers) |
+| Categories included | Gaming, People & Blogs, Education, Howto & Style, Entertainment, Comedy |
+| Categories excluded | Music, News, Film & Animation, Sports, Trailers |
+
+## Key Fields
+
+| Field | Description |
+|:---|:---|
+| `video_id` | Unique YouTube video identifier |
+| `channel_id` | Channel identifier |
+| `channel_title` | Channel name |
+| `category_id` | YouTube category (e.g., 20 = Gaming, 27 = Education) |
+| `published_at` | Upload timestamp (ISO 8601) --- determines pre/post July 27, 2020 |
+| `duration_sec` | Video length in seconds --- **the running variable** |
+| `view_count` | Lifetime view count |
+| `like_count` | Lifetime like count |
+| `comment_count` | Lifetime comment count |
+| `title` | Video title (for qualitative inspection of padding patterns) |
+
+# Key Components of the Causal Design
+
+**Method:** Regression Discontinuity Design (RDD), with the McCrary density test as the primary specification and a complementary difference-in-differences robustness check around the July 27, 2020 policy switch.
+
+**Treatment:** Mid-roll ad eligibility, which turns on at a sharp duration cutoff.
+
+- **Cutoff 1 --- 10:00 (600 seconds):** the threshold for videos uploaded **before** July 27, 2020.
+- **Cutoff 2 --- 8:00 (480 seconds):** the threshold for videos uploaded **on or after** July 27, 2020.
+
+**Treated units:** Videos published within a narrow bandwidth *just above* each cutoff in the relevant period. Under standard RDD bandwidths (Calonico-Cattaneo-Titiunik optimal bandwidth), this will be tens of thousands of videos per cutoff.
+
+**Control group (the "counterfactual"):** Videos published *just below* each cutoff in the same period. Because duration is a granular choice variable and the cutoff is sharp, videos immediately on either side of the cutoff are plausibly comparable on everything except mid-roll eligibility. The density discontinuity between the two groups is our estimate of the behavioral distortion.
+
+**Outcomes:**
+
+- **Primary:** the magnitude of the density discontinuity at each cutoff (a direct measure of manipulation / strategic padding).
+- **Secondary:** views, likes, and comments for videos just above vs. just below each cutoff, to assess whether creators who cross the threshold are rewarded with more engagement (and thus whether the padding behavior is individually rational).
+
+**Dimensions of variation we plan to explore:**
+
+- **Time:** pre-July 2020 vs. post-July 2020 --- does the bunching mass migrate cleanly from 10:00 to 8:00?
+- **Creator size:** do larger, more monetization-focused channels bunch harder than smaller hobbyist channels?
+- **Category:** which content categories show the strongest strategic-padding response (we expect Gaming and Education to differ meaningfully from one another)?
+- **Video vintage:** does bunching intensify over time as creator literacy about monetization rules matures?
+
+**Robustness / placebo checks:** We will run the same density test at **9:00** and **7:00** --- cutoffs with no policy meaning --- and expect flat densities. We will also run the test on the pre-2018 period as a further placebo.
+
+**Expected actionable takeaways for management:**
+
+1. A quantified estimate of the share of videos in the 8:00--8:30 (and, pre-2020, 10:00--10:30) range that are attributable to strategic padding rather than natural content length.
+2. An estimate of the aggregate viewer-time cost of that padding (average excess seconds $\times$ total affected videos).
+3. A recommendation on whether the threshold should be kept, removed, or redesigned (e.g., a smooth ramp in monetization eligibility rather than a hard cutoff), grounded in the data rather than in creator anecdotes.
+
+# Why This Project Is Worth Doing
+
+The 8-minute threshold has been a defining feature of YouTube creator economics for six years. Industry observers predicted in 2020 that it would change creator behavior, but to our knowledge no public analysis has measured the magnitude of the distortion with the rigor the question deserves. A clean RDD at two reinforcing cutoffs --- with bunching mass visibly migrating from 10:00 to 8:00 at the exact moment the policy changed --- would be unusually compelling evidence for a policy decision that directly affects billions of viewer-hours per year.
