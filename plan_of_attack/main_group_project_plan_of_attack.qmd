@@ -1,0 +1,563 @@
+---
+title: "Plan of Attack"
+subtitle: "Measuring the Behavioral Distortion of YouTube's Mid-Roll Ad Threshold"
+author: "Minchan Kim, Andy Ho, Eva Tang, Ming Lu"
+date: "2026-05-03"
+format:
+  pdf:
+    toc: true
+    toc-depth: 2
+    number-sections: true
+    fig-pos: "H"
+    geometry:
+      - margin=1in
+    link-citations: true
+---
+
+\newpage
+
+# Summary
+
+**Research question.** Has YouTube's minimum-length rule for mid-roll ads
+caused creators to strategically lengthen their videos to cross the
+eligibility threshold (10:00 before July 27, 2020; 8:00 after), and if
+so, how large is the behavioral distortion?
+
+**Method.** Regression discontinuity design (RDD) with a McCrary-style
+density test at each cutoff as the primary specification, plus a
+difference-in-differences migration check across the 2020 policy
+switch. Three placebo cutoffs (420s, 540s, 660s), Sports as a placebo
+category, and a pre-2018 placebo period jointly test the design's
+robustness.
+
+**Pilot status (as of 2026-05-03).** End-to-end pipeline verified on 35
+stratified channels (5 per category × 7 categories), 1,181
+analysis-ready videos after filtering YouTube Shorts. Section 1 numbers
+and Figure 1 are from the pilot. The pilot surfaced two issues the
+writeup now addresses explicitly: (a) Shorts contamination at 60–61s,
+filtered out via §2c; (b) discovery-method bias toward recent uploads,
+documented as §2h. Pilot-scale bunching at the cutoffs is not visible
+under the current sample size, but the test has insufficient power to
+draw a conclusion — the full pull will provide it.
+
+**Next.** Full pull (~1,500 channels) using the same scripts, with
+parity multi-querying across the six allowed categories and a second
+discovery pass at `publishedBefore=2019-12-31` to surface pre-policy
+channels (see §4 for the configuration changes).
+
+\newpage
+
+# Section 1 — Describe the Raw Data
+
+All numbers in this section come from a stratified pilot of 35 channels
+(5 per allowed category) that we pulled from the YouTube Data API v3 on
+2026-05-03. The full pull (target ~1,500 channels) will use the same
+pipeline; the pilot's role is to verify the pipeline works end-to-end and
+to surface real data-quality issues *before* we commit to the full
+collection.
+
+## Data sources
+
+We use a single primary data source — the **YouTube Data API v3**,
+specifically `channels.list`, `playlistItems.list`, `search.list`, and
+`videos.list` — joined to a hand-curated channel sample frame built from
+SocialBlade and NoxInfluencer leaderboards plus auto-discovery via the
+API itself. Two distinct datasets feed the analysis:
+
+- **`data/channels.parquet`** — channel-level metadata (190 rows). One
+  row per channel.
+- **`data/pilot_videos.parquet`** — video-level metadata (2,839 rows in
+  the 2018-01 to 2023-12 window). One row per video.
+
+## (a) Number of observations and variables
+
+- **Channel frame:** 190 channels × 7 columns
+  (`channel_id`, `channel_title`, `subscriber_count`, `primary_category`,
+  `custom_url`, `channel_created`, `window_coverage`).
+- **Pilot video pull (raw):** 12,622 videos × 13 columns. After
+  restricting to the 2018-01-01 → 2023-12-31 study window, 2,839 rows
+  remain.
+- After the YouTube Shorts filter (see §2c), the analysis sample is
+  **1,181 videos × 13 columns from 17 channels**.
+
+## (b) Unit of observation
+
+The unit of observation in the analysis dataset is **one YouTube video**,
+uniquely identified by `video_id`. Each row is also keyed to a
+`channel_id` and a `published_at` timestamp.
+
+## (c) Time period
+
+**2018-01-18 to 2023-12-30** in the pilot — the inclusive endpoints of
+the study window we requested. The full pull will use the same window
+(2018-01-01 to 2023-12-31), giving 30 months of pre-policy and 41 months
+of post-policy data around the July 27, 2020 mid-roll threshold change.
+
+## (d) Cross-sectional units
+
+| Unit | Pilot count | Full-pull target |
+|------|:-:|:-:|
+| Unique channels (frame) | 190 | ~1,500 |
+| Unique channels with in-window uploads | 19 (raw) / 17 (post-Shorts) | ~1,000+ |
+| Unique categories represented | 7 | 7 |
+| Unique YouTube video category IDs | 9 (videos can be tagged with category IDs that differ from their channel's primary) | similar |
+
+The seven channel-level categories are: Gaming, Sports, People & Blogs,
+Education, Entertainment, Howto & Style, Comedy. Sports is included as
+a deliberate placebo category (see §3c).
+
+## (e) Summary statistics for key variables
+
+The dependent variable for the primary specification is `duration_sec`
+(the running variable in the RDD). Engagement variables (`view_count`,
+`like_count`, `comment_count`) are secondary outcomes for the
+"is bunching individually rational?" check.
+
+| Variable | n | % NA | min | p25 | median | p75 | p99 | max |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| duration_sec | 1,181 | 0.00 | 62 | 145 | 372 | 889 | 5,755 | 21,678 |
+| view_count | 1,181 | 0.00 | 76 | 3,864 | 21,011 | 207,712 | 3,960,807 | 23,787,774 |
+| like_count | 1,166 | 1.27 | 3 | 97 | 484 | 2,500 | 28,304 | 105,305 |
+| comment_count | 1,180 | 0.08 | 0 | 10 | 32 | 79 | 789 | 2,911 |
+
+Median video duration is 6:12 — well below both the 8:00 and 10:00
+cutoffs, with most density concentrated in the 2–10 minute range.
+Engagement metrics are sharply right-skewed, as expected for YouTube data
+(median 21K views, p99 ~4M views, max ~24M).
+
+### Distribution of the running variable (Figure 1 candidate)
+
+![Duration density around the mid-roll cutoffs (pilot, post-Shorts).
+Solid red rule: active threshold in that period (480s post, 600s pre).
+Dashed grey: the other period's threshold for reference. Pre-policy
+panel is sparse — see §2 for the discovery-bias caveat.](../figures/fig1_duration_hist.png){#fig-fig1 width=100%}
+
+The post-policy panel shows a smooth declining distribution from ~1:00
+out to 20:00. There is no obvious bunching mass immediately above 8:00 in
+the pilot — but at this sample size (~250 videos in the 6:00–10:00 zoom)
+the test has very low statistical power. The full pull (10× more channels,
+balanced multi-query discovery, plus a date-windowed pre-2019 discovery
+pass) will provide the power to detect bunching of a plausible magnitude.
+
+## (f) Data quality issues
+
+Per-variable audit on the analysis sample:
+
+| Issue | Count | % of sample |
+|---|---:|---:|
+| `duration_sec` missing | 0 | 0.00 |
+| `duration_sec == 0` | 0 | 0.00 |
+| `duration_sec > 12h` | 0 | 0.00 |
+| `view_count` missing | 0 | 0.00 |
+| `comment_count` missing (comments disabled) | 1 | 0.08 |
+| `like_count` missing (likes hidden) | 15 | 1.27 |
+| Duplicate `video_id` | 0 | 0.00 |
+
+The data is clean. The few missing engagement values reflect creators'
+explicit choices (disabling comments, hiding the like count) rather
+than data integrity problems. We do not impute these — for the engagement
+analyses they will be excluded as missing.
+
+\newpage
+
+# Section 2 — Sample Construction Plan
+
+## (a) Sample window
+
+**2018-01-01 to 2023-12-31** (six years; 30 months pre-policy, 41 months
+post). The window is wide enough that channel-level upload patterns
+average over short-term shocks but narrow enough that we are not picking
+up secular changes in YouTube's overall content economy from before 2018
+(Shorts, vertical video, the algorithm changes of 2017–2018).
+
+The window contains two structural breaks:
+
+1. **The COVID shock (March 2020).** Affects upload volume across the
+   platform; the policy change is only ~4 months later (July 2020). Our
+   primary specification — the McCrary density test — is computed
+   *cross-sectionally* within a narrow date band, so a level-shift in
+   total upload volume does not bias the *density at the cutoff*.
+   We will additionally run a robustness check that drops
+   2020-03-01 → 2020-09-30 (see §3c) to verify.
+2. **The mid-roll policy change (2020-07-27)**. This is the treatment;
+   not a contamination.
+
+## (b) Other sample restrictions
+
+- **Subscriber band: 10,000 – 1,000,000** at the time the channel was
+  pulled. Channels below 10K are too small to be optimizing for
+  monetization; channels above 1M are corporate or near-corporate
+  operations whose upload-length decisions are made by editorial teams
+  rather than individual creators. The band targets the population for
+  which the proposal's behavioral hypothesis is well-defined.
+- **Six allowed content categories:** Gaming, People & Blogs, Education,
+  Howto & Style, Entertainment, Comedy. Excluded: Music, News, Film &
+  Animation, Trailers — categories where length is structurally
+  determined (a song's length, a news segment's length, a film trailer's
+  length) and where mid-roll padding behavior would be confounded with
+  format constraints. **Sports is included** in the analysis sample as
+  a deliberate placebo category — its length is also structurally
+  determined (a highlight reel matches a game's length), so it should
+  *not* exhibit bunching at 480s. See §3c.
+- **English-language channels only**, to keep the sample comparable on
+  monetization rules (which are platform-wide but creator literacy
+  varies by language community).
+
+## (c) Dependent variable integrity
+
+The primary dependent variable is the *density* of `duration_sec` near
+each cutoff. `duration_sec` itself is the running variable — the variable
+being tested for manipulation. **We do not winsorize, trim, or transform
+`duration_sec`**, because doing so on the running variable would erase
+the very pattern the McCrary test is meant to detect.
+
+We do apply two principled filters to `duration_sec`:
+
+- **Drop `duration_sec == 0`** (0 in pilot). Almost certainly deleted or
+  malformed videos.
+- **Drop `duration_sec <= 61` (Shorts filter, added 2026-05-03 after
+  pilot inspection).** YouTube Shorts are a separate format that *does
+  not run mid-roll ads*, so they cannot exhibit bunching at 480s/600s
+  and would only contaminate the duration histogram with a massive spike
+  at ~60s. The threshold is 61s rather than 60s because YouTube's API
+  reports `contentDetails.duration` in whole seconds and rounds
+  60.x-second Shorts up to 61s. Pilot inspection of 1-second bins from
+  60-90s showed 152 videos at 60s and 94 at 61s versus 2-5 per bin from
+  62s onward; the 61s sample was dominated by `#shorts`-tagged vertical
+  content. The filter removes 1,658 of the 2,839 in-window videos
+  (58.4%).
+
+Engagement variables (`view_count`, `like_count`, `comment_count`) are
+heavy-tailed. The proposal calls for these as *secondary* outcomes
+("does crossing 8:00 actually pay off in views?"). For these
+secondary checks we will use **log10(value + 1)** rather than
+winsorization, because the analysis only needs the ordinal comparison
+between just-below-cutoff and just-above-cutoff videos and log
+transformation handles the skew without discarding observations.
+
+## (d) Independent variable integrity
+
+The key independent variables are derived deterministically from the
+raw data:
+
+- **`post_policy`**: indicator, `published_at >= 2020-07-27`. The
+  proposal uses calendar date with no time-of-day; we follow that
+  convention.
+- **`active_cutoff`**: 600 if pre-policy, 480 if post-policy.
+- **`distance_to_cutoff`**: `duration_sec - active_cutoff`.
+- **`creator_size_bucket`**: discretization of `subscriber_count` into
+  three buckets — small (10K–50K), medium (50K–250K), large
+  (250K–1M) — for heterogeneity analysis.
+- **`primary_category`**: human-curated channel-level category from the
+  seed list; not the per-video YouTube category ID, which is much
+  noisier (creators tag individual videos differently from their
+  channel's overall focus).
+
+## (e) Aggregation
+
+**Not applicable.** The unit of analysis (one video) is already the unit
+at which the policy applies — mid-roll eligibility is determined per
+video by `duration_sec`, not at any higher aggregate level. We do *not*
+aggregate to channel-month or channel-quarter for the primary
+specification.
+
+(For Section 7 of the exploratory notebook — a time-trend visualization —
+we *do* aggregate to channel-month for plotting purposes only, never
+for inferential analysis.)
+
+## (f) Data merging
+
+The video table (`pilot_videos.parquet`) is left-joined onto the channel
+frame (`channels.parquet`) by `channel_id` to attach `subscriber_count`,
+`primary_category`, and `window_coverage`. Expected loss in the merge:
+**zero** — every video in the pull comes from a channel that is in the
+frame by construction.
+
+## (g) Filters and transformations
+
+Reported as a sequential filter chain on the pilot, with full-pull
+counts to be back-filled at submission:
+
+| Step | Operation | Pilot N | Pct dropped |
+|------|-----------|--------:|------------:|
+| 0 | Raw video metadata pulled (35 channels) | 12,622 | — |
+| 1 | Restrict to 2018-01-01 → 2023-12-31 | 2,839 | 77.5% |
+| 2 | Drop `duration_sec <= 61` (Shorts + rounding) | 1,181 | 58.4% |
+| 3 | Drop `duration_sec == 0` (deleted videos) | 1,181 | 0.00% |
+| 4 | Drop NA `published_at` | 1,181 | 0.00% |
+| **Final analysis sample** | | **1,181** | |
+
+Step 1 is the largest single drop and reflects the discovery-method
+bias (channels were surfaced via `search.list?publishedAfter=2024-01-01`,
+which over-selects creators uploading heavily in 2024–2025 — outside
+our window). The full-pull discovery will mitigate this with a second
+pass at `publishedBefore=2019-12-31`.
+
+## (h) Sampling caveat — search-discovery bias
+
+Our channel sample is *not* a random or census sample of all 10K–1M
+creators. It is drawn via YouTube's
+`search.list?type=video&order=viewCount&publishedAfter=2024-01-01` for
+each category, then filtered to the subscriber band. Three known biases,
+**all pushing the same direction (upward inflation of any estimated
+bunching effect)**:
+
+1. **Algorithm-savvy selection.** Channels surfaced by `order=viewCount`
+   on recent uploads are disproportionately savvy about YouTube's
+   algorithm — exactly the population most likely to strategically pad
+   to clear the 480s threshold. The sample over-weights bunchers.
+2. **Gaming-multi-query asymmetry.** The pilot discovery script issued
+   four queries for Gaming (`gameplay`, `speedrun`, `lets play`,
+   `minecraft`) and only one each for the other allowed categories.
+   Gaming's candidate density is therefore artificially higher.
+3. **Pre-2019 under-coverage.** The `publishedAfter=2024-01-01` filter
+   selects channels with recent uploads; many older channels with
+   pre-policy history are missed. Pilot's pre-policy panel of Figure 1
+   is conspicuously sparse for this reason.
+
+**These biases must be interpreted as upper bounds on the population
+effect.** The full pull will fix (2) with parity multi-querying across
+all six allowed categories and (3) with a second `publishedBefore=
+2019-12-31` discovery pass. Bias (1) is intrinsic to any API-based
+sample and remains a documented limitation.
+
+\newpage
+
+# Section 3 — Analysis Plan
+
+## (a) Research design
+
+**Causal**, using a **regression discontinuity design (RDD) with a
+McCrary-style density test** as the primary specification, plus a
+**difference-in-differences (DiD)-style migration check** across the
+2020-07-27 policy switch.
+
+**Source of variation.** YouTube's mid-roll eligibility rule creates a
+sharp discontinuity in the running variable (video duration). A creator
+who uploads a 7:59 video cannot run mid-roll ads; a creator who uploads
+an 8:00 video can (post-2020-07-27). Because duration is a choice
+variable that creators can manipulate *at* the cutoff, we expect to see
+statistical bunching of videos immediately above the threshold — a
+density discontinuity that is the direct footprint of strategic behavior.
+
+**Identifying assumptions.** McCrary's density test under standard RDD
+assumptions requires:
+
+1. **No other policy or feature creates a discontinuity at exactly the
+   same threshold.** Plausible: 480s and 600s are arbitrary mid-roll
+   thresholds with no other YouTube product or algorithm tied to them.
+2. **The running variable's distribution would be smooth in the absence
+   of the manipulation.** Confirmed by the placebo tests at 7:00, 9:00,
+   and 11:00 (§3c), which should show flat densities.
+3. **The population of creators on either side of the cutoff is
+   exchangeable in the limit.** Held by construction: a creator
+   choosing 7:59 vs 8:01 is the same person making a 2-second decision.
+
+The DiD migration check provides a second, reinforcing piece of evidence:
+if creators respond to monetization incentives, the bunching mass should
+**migrate from 600s to 480s on or shortly after 2020-07-27**.
+
+## (b) Key analyses
+
+For each analysis we describe (i) what we are testing, (ii) the precise
+implementation, and (iii) how it contributes to the research question.
+
+### Analysis 1 — McCrary density test at 480s, post-policy
+
+(i) **Test:** is there a discontinuity in the density of `duration_sec`
+at 480s in the post-policy sample?
+
+(ii) **Implementation.** Restrict to `published_at >= 2020-07-27` and
+drop the Shorts-filtered videos (§2c). Use `rdrobust::rdbwselect()` to
+choose the optimal bandwidth (MSE-optimal per Calonico, Cattaneo,
+Titiunik 2014). Then run `rddensity::rddensity(X = duration_sec, c =
+480)`. Report the test statistic, p-value, point estimate of the
+discontinuity in density, and the bandwidth.
+
+(iii) **Contribution.** This is the primary test. A significant positive
+discontinuity means creators systematically inflate duration to clear
+the 8:00 threshold post-policy. Magnitude tells us how much.
+
+### Analysis 2 — McCrary density test at 600s, pre-policy
+
+(i) **Test:** is there a discontinuity in the density of `duration_sec`
+at 600s in the pre-policy sample?
+
+(ii) **Implementation.** Same as Analysis 1 but restrict to
+`published_at < 2020-07-27` and use `c = 600`.
+
+(iii) **Contribution.** The pre-policy threshold was 10:00. A significant
+discontinuity at 600s in the pre-period is direct evidence that the
+behavioral effect existed under the original threshold too — and thus
+that the bunching we estimate at 480s post-policy is not a one-off
+peculiarity of the lowered threshold.
+
+### Analysis 3 — Migration check (DiD-style)
+
+(i) **Test:** does the bunching mass migrate from 600s to 480s when the
+threshold changes? Specifically: density at 600s should *attenuate* in
+the post-period, and density at 480s should be *flat* in the pre-period.
+
+(ii) **Implementation.** Run two cross-period density tests:
+
+- `rddensity(X = duration_sec, c = 600)` on the **post-policy** sample.
+  Expectation: null (no discontinuity).
+- `rddensity(X = duration_sec, c = 480)` on the **pre-policy** sample.
+  Expectation: null (no discontinuity).
+
+(iii) **Contribution.** If creators are responding to *monetization
+incentives* (rather than to some unrelated norm at 8:00 or 10:00), the
+bunching should track the active threshold across the policy change.
+This is the strongest piece of evidence in the design — the visual
+"mass migration" in @fig-fig1 is the punchline.
+
+### Analysis 4 — Engagement check
+
+(i) **Test:** are videos just-above-480s rewarded with more
+engagement than videos just-below-480s? In other words: is bunching
+individually rational?
+
+(ii) **Implementation.** Restrict to post-policy. Define two groups:
+`below = duration_sec in [480 - h, 480)` and
+`above = duration_sec in [480, 480 + h)` for `h = 30s` (replicate at
+`h in {15, 60}` for robustness). Compare `log(view_count + 1)`,
+`log(like_count + 1)`, `log(comment_count + 1)` between groups using
+two-sample t-tests and report median engagement per group.
+
+(iii) **Contribution.** A material positive premium for crossing
+the threshold rationalizes the observed bunching. A null premium
+suggests creators are bunching out of belief rather than measured
+return, which is itself a finding.
+
+### Analysis 5 — Heterogeneity
+
+(i) **Test:** does the magnitude of the bunching effect differ across
+creator subgroups?
+
+(ii) **Implementation.** Re-run Analysis 1 separately by:
+
+- `creator_size_bucket` in {small, medium, large}
+- `primary_category` in {Gaming, People & Blogs, Education, Howto & Style,
+  Entertainment, Comedy}
+- channel cohort (`channel_created` year, binned)
+
+Report the McCrary test statistic and density-discontinuity estimate for
+each subgroup with bootstrap confidence intervals.
+
+(iii) **Contribution.** The proposal hypothesizes that
+larger / more-monetization-focused channels bunch harder. Confirming
+or refuting that informs the policy recommendation: if bunching is
+concentrated among professional creators, removing the threshold has
+different distributional consequences than if it is uniform.
+
+### Figure 1
+
+The duration histogram of @fig-fig1 — pre-policy and post-policy panels
+stacked vertically, with vertical lines at 480 and 600 — is our Figure 1.
+At full-pull scale, the visible "mass migration" of density from 600s
+in the pre-panel to 480s in the post-panel is the entire story of the
+paper in a single image. The pilot's version is preliminary
+(pre-policy panel sparse due to discovery bias §2h) but already shows
+the histogram is clean, no Shorts contamination, and ready to scale up.
+
+## (c) Robustness checks (extra credit)
+
+We will run the following robustness checks. Each is explicitly motivated
+by a concern that, if borne out, would undermine the primary result.
+
+### Placebo cutoffs
+
+**Concern.** The McCrary test could spuriously find a discontinuity if
+the underlying density is irregular for reasons unrelated to the policy.
+
+**Check.** Run McCrary at *placebo* cutoffs: 420s (7:00), 540s (9:00),
+and 660s (11:00). None of these have any policy meaning. Expectation:
+flat densities at all three. If we find a significant discontinuity
+at any of these, the primary result is suspect.
+
+### Placebo period (pre-2018)
+
+**Concern.** Bunching at 480s might exist in the data for reasons
+predating the policy.
+
+**Check.** Re-run Analysis 1 on a pre-2018 sample. The 2020 mid-roll
+threshold of 480s was introduced on 2020-07-27; in 2017 it had no
+policy meaning. Expectation: flat density at 480s in 2017.
+
+### Placebo category — Sports
+
+**Concern.** A category-wide platform feature or audience norm at 8:00
+(rather than the mid-roll rule itself) could drive the bunching.
+
+**Check.** Run the same McCrary tests on **Sports videos**. Sports
+content has structurally determined length (highlight reels match a
+game's length, full games are an hour-plus), so creators have very
+limited ability to manipulate duration around the cutoff. Expectation:
+flat density at 480s and 600s in the Sports subsample. If Sports
+*does* bunch, the result indicates a confound (a platform-wide
+algorithm or duration norm at 8:00 unrelated to mid-roll eligibility)
+and the main result is suspect. The pilot already includes Sports
+channels for this reason; the full pull should retain them.
+
+### Sample window — drop COVID-affected months
+
+**Concern.** The COVID shock (March 2020) coincides with a period
+of unusual upload behavior on YouTube, and the policy change comes
+~4 months later. The two could be conflated in the post-policy estimate.
+
+**Check.** Re-run the primary specification dropping
+2020-03-01 → 2020-09-30. Expectation: the bunching estimate at 480s
+in the post-policy sample remains essentially unchanged.
+
+### Alternative bandwidths
+
+**Concern.** The MSE-optimal bandwidth from `rdrobust::rdbwselect()`
+could happen to land in a region where the density is unusual.
+
+**Check.** Re-run Analysis 1 with the bandwidth set to ½ × and 2 × the
+optimal value. Expectation: the qualitative result (discontinuity / no
+discontinuity) is robust to the bandwidth choice.
+
+### Alternative engagement specifications
+
+**Concern.** The engagement check (Analysis 4) could be sensitive to
+the log transformation or the bandwidth on either side of the cutoff.
+
+**Check.** Re-run Analysis 4 (a) without log transformation, (b) with
+99th-percentile winsorization instead of log, (c) at bandwidths of 15
+and 60 seconds. Expectation: the qualitative direction (premium / null)
+is robust.
+
+\newpage
+
+# Appendix: Pilot artifacts and reproducibility
+
+The full analysis pipeline is reproducible from this repository.
+
+- **`code/00b_discover_candidates.R`** — Auto-discover candidate
+  channels per category (~1,200 quota units).
+- **`code/00_resolve_channels.R`** — Verify seeds against the API,
+  filter to 10K–1M, label window coverage.
+- **`code/01_pull_channels.R`** — Final channel-frame filter plus the
+  stratified pilot subset.
+- **`code/02_pull_videos.R`** — Idempotent video-metadata pull;
+  per-channel responses cache under `data/raw/`.
+- **`code/03_explore_pilot.R`** — Section-1 stats, QC flags, and the
+  Figure 1 candidate.
+- **`python/notebooks/explore_channel_seeds.py`** — Marimo notebook for
+  discovery review.
+- **`python/notebooks/pilot_video_analysis.py`** — Marimo notebook for
+  interactive cross-filter exploration.
+
+Running the full pipeline from a fresh clone requires only a YouTube
+Data API v3 key in `.env`. Total quota cost end-to-end on the pilot:
+~6,500 units (well below the 10,000-unit daily allowance).
+
+The full pull will use the same scripts with two configuration changes:
+
+1. `00b_discover_candidates.R`: parity multi-querying across all six
+   allowed categories (not just Gaming), plus a second discovery pass
+   with `publishedBefore=2019-12-31` to surface pre-policy channels.
+2. `02_pull_videos.R`: set
+   `VIDEO_PULL_INPUT=data/channels.parquet` (instead of the
+   pilot-subset path) before running.

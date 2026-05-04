@@ -1,3 +1,31 @@
 docs/
 .agents/
 .claude/
+
+# Secrets
+.env
+.Renviron
+
+# Raw and intermediate data (regeneratable from the YouTube Data API)
+data/
+# ...except the seed schema template, which documents the expected input shape.
+!data/channels_seeds_template.csv
+
+# R session artifacts
+.Rproj.user/
+.Rhistory
+.RData
+.Ruserdata
+renv/library/
+renv/python/
+renv/staging/
+
+# OS junk
+.DS_Store
+
+# Python / uv
+.venv/
+__pycache__/
+*.pyc
+.python-version
+__marimo__/
