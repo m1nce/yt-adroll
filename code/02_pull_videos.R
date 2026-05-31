@@ -71,8 +71,9 @@ yt_get <- function(endpoint, query) {
   query$key <- api_key
   req <- request(paste0(API_BASE, "/", endpoint)) |>
     req_url_query(!!!query) |>
-    req_retry(max_tries = 3, backoff = \(i) min(2 ^ i, 30)) |>
-    req_error(is_error = \(resp) FALSE)
+    req_retry(max_tries = 5, backoff = \(i) min(2 ^ i, 60),
+              is_transient = \(resp) resp_status(resp) %in% c(429L, 500L, 503L)) |>
+    req_error(is_error = \(resp) resp_status(resp) >= 500L)
   resp <- req_perform(req)
   if (resp_status(resp) >= 400) {
     body <- tryCatch(resp_body_json(resp), error = \(e) list())
@@ -166,7 +167,13 @@ pull_channel <- function(channel_id) {
       character(0)
     }
   )
-  details <- get_video_details(vids)
+  details <- tryCatch(
+    get_video_details(vids),
+    error = function(e) {
+      message("  (video details error: ", conditionMessage(e), "; skipping)")
+      tibble()
+    }
+  )
   if (nrow(details) > 0) {
     details <- details |>
       mutate(
