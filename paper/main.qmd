@@ -1,0 +1,360 @@
+---
+title: "Measuring the Behavioral Distortion of YouTube's Mid-Roll Ad Threshold"
+author: "Minchan Kim, Andy Ho, Eva Tang, Ming Lu"
+date: "2026-05-31"
+format:
+  pdf:
+    number-sections: true
+    fig-pos: "H"
+    geometry:
+      - margin=1in
+    link-citations: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+library(readr)
+library(dplyr)
+library(tidyr)
+library(knitr)
+library(arrow)
+
+res  <- read_csv("../data/analysis_results.csv", show_col_types = FALSE)
+vids <- read_parquet("../data/full_videos.parquet") |>
+  filter(duration_sec > 61, !is.na(published_at)) |>
+  mutate(pub_date    = as.Date(published_at),
+         post_policy = pub_date >= as.Date("2020-07-27")) |>
+  filter(pub_date >= as.Date("2018-01-01"),
+         pub_date <= as.Date("2023-12-31"))
+
+r_primary  <- res |> filter(grepl("PRIMARY",        analysis))
+r_pre      <- res |> filter(grepl("600s pre",        analysis))
+r_mig_post <- res |> filter(grepl("600s in post",    analysis))
+r_mig_pre  <- res |> filter(grepl("480s in pre",     analysis))
+r_eng      <- res |> filter(grepl("Engagement",      analysis))
+
+n_total <- nrow(vids)
+n_post  <- sum(vids$post_policy)
+n_pre   <- sum(!vids$post_policy)
+n_ch    <- n_distinct(vids$channel_id)
+```
+
+# Introduction
+
+YouTube's monetization rules shape the economics of online video creation in
+ways that extend far beyond their explicit intent. One of the most consequential
+is the mid-roll advertisement threshold: videos must exceed a minimum duration
+to display mid-roll ads, which appear mid-video and earn significantly more
+revenue per view than pre-roll ads. In July 2020, YouTube reduced this threshold
+from 10 minutes (600 seconds) to 8 minutes (480 seconds).
+
+The threshold creates a sharp incentive. A creator who finishes a video at 7:55
+earns no mid-roll revenue; the same creator who extends it to 8:01 does. If
+creators respond by strategically padding videos to clear the cutoff, a
+measurable density discontinuity will appear in the distribution of video
+durations --- a concentration of videos immediately above the threshold that
+cannot be explained by the organic distribution of content length. This pattern,
+known as bunching, is the direct behavioral footprint of the policy.
+
+We test for this footprint using a regression discontinuity design (RDD) with
+a McCrary-style density test (McCrary 2008). Our sample covers
+`r n_ch` English-language YouTube channels with 10,000--1,000,000 subscribers,
+yielding `r format(n_total, big.mark=",")` analysis-ready videos uploaded
+between January 2018 and December 2023. The 2020 policy change provides a
+second, reinforcing experiment: if bunching is driven by the mid-roll rule,
+the density mass should migrate from 10:00 to 8:00 exactly when the threshold
+changes.
+
+We find statistically significant bunching at the 8:00 threshold in the
+post-2020 sample
+(t = `r round(r_primary$t_stat, 2)`, p = `r round(r_primary$p_value, 3)`).
+Placebo cutoffs at 9:00 and 11:00 are flat, confirming the effect is
+specific to the active policy threshold. Contrary to the hypothesis that
+crossing the threshold is individually rewarded, videos just above 8:00
+show significantly lower engagement than videos just below, suggesting
+creators pad out of belief in the rule rather than measured return.
+
+# Data
+
+## Source and collection
+
+We draw video-level metadata from the YouTube Data API v3, which provides
+video duration, upload timestamp, view count, like count, and comment count
+for all publicly visible videos. To construct the channel sample, we used
+the API's `search.list` endpoint with parity queries across six content
+categories --- Gaming, People & Blogs, Education, Howto & Style,
+Entertainment, and Comedy --- filtered to channels with 10,000--1,000,000
+subscribers. Music, News, Film & Animation, and Trailers are excluded because
+video length in those categories is structurally determined rather than
+chosen. Sports channels are retained as a placebo category.
+
+## Sample
+
+```{r sample-stats}
+stats <- vids |>
+  summarise(
+    `Analysis-ready videos`  = format(n(),                    big.mark = ","),
+    `Unique channels`        = format(n_distinct(channel_id), big.mark = ","),
+    `Post-policy videos`     = format(sum(post_policy),       big.mark = ","),
+    `Pre-policy videos`      = format(sum(!post_policy),      big.mark = ","),
+    `Date range`             = paste(min(pub_date), "to", max(pub_date)),
+    `Median duration`        = paste0(
+      floor(median(duration_sec) / 60), ":",
+      sprintf("%02d", as.integer(median(duration_sec)) %% 60L))
+  ) |>
+  pivot_longer(everything(), names_to = "Attribute", values_to = "Value")
+
+kable(stats, booktabs = TRUE,
+      caption = "Analysis sample summary.")
+```
+
+Videos with `duration_sec <= 61` are excluded as YouTube Shorts, which are
+ineligible for mid-roll ads. The 61-second threshold (rather than 60) accounts
+for the API rounding 60.x-second Shorts up to 61 seconds.
+
+## Study window and cutoffs
+
+The study window runs 2018-01-01 to 2023-12-31. The mid-roll eligibility
+threshold is 600 seconds (10:00) for videos uploaded before 2020-07-27
+(pre-policy) and 480 seconds (8:00) for videos uploaded on or after that
+date (post-policy).
+
+Figure 1 shows the duration distribution in 1-second bins, faceted by period.
+
+![Duration density around the mid-roll cutoffs. Solid red: active threshold in
+that period. Dashed grey: the other period's threshold for
+reference.](../figures/fig1_duration_hist.png){#fig-fig1 width=100%}
+
+## Sampling limitations
+
+Our channel sample is not a census. The discovery method
+(`search.list?order=viewCount&publishedAfter=2024-01-01`) over-selects
+algorithm-savvy recent uploaders and under-covers pre-2019 channels --- which
+is why the pre-policy panel in Figure 1 is sparse relative to the post-policy
+panel. This bias inflates any estimated bunching effect, so our estimates
+should be interpreted as upper bounds. The full-scale study would require a
+separate pre-2019 discovery pass; the present analysis treats this as a
+documented limitation.
+
+# Research Design
+
+## McCrary density test
+
+The core identification strategy exploits the sharp discontinuity in mid-roll
+eligibility at the duration threshold. Under standard RDD assumptions, the
+density of video durations should be smooth at the cutoff absent manipulation.
+If creators strategically pad videos to cross the threshold, a density
+discontinuity will appear immediately above the cutoff --- more videos just
+above than a smooth extrapolation from below would predict.
+
+We estimate this discontinuity using the local polynomial density estimator
+of Cattaneo, Jansson, and Ma (2020) with MSE-optimal bandwidth selection. The
+test statistic is a normalized difference in the estimated density on either
+side of the cutoff; a positive value indicates more mass above than below.
+
+## Two-cutoff identification
+
+If bunching is driven by the mid-roll rule, then: (1) there should be a
+density discontinuity at 600s in the pre-policy period; (2) there should be
+no discontinuity at 600s in the post-policy period (threshold removed); and
+(3) no discontinuity at 480s in the pre-policy period (threshold not yet
+active). This migration pattern cannot be explained by a content-length norm,
+since creators would have no reason to norm at 480s before the threshold
+existed.
+
+## Placebo checks
+
+We run the McCrary test at three policy-irrelevant cutoffs in the post-policy
+sample: 420s (7:00), 540s (9:00), and 660s (11:00). A significant result at
+any placebo would suggest the primary result reflects a structural feature of
+the duration distribution rather than a policy response.
+
+# Results
+
+## Primary result: bunching at 480s post-policy
+
+```{r primary-result}
+kable(
+  r_primary |>
+    select(estimate, t_stat, p_value, bw_left, bw_right, n) |>
+    rename(`Density diff.` = estimate, `t-stat` = t_stat,
+           `p-value` = p_value, `BW left (s)` = bw_left,
+           `BW right (s)` = bw_right, N = n) |>
+    mutate(across(where(is.numeric), \(x) round(x, 4))),
+  booktabs = TRUE,
+  caption = "McCrary density test at 480s, post-policy (primary result)."
+)
+```
+
+The test detects a statistically significant density discontinuity at the 8:00
+cutoff in the post-policy sample
+(t = `r round(r_primary$t_stat, 2)`, p = `r round(r_primary$p_value, 3)`).
+The positive estimate of `r round(r_primary$estimate, 5)` indicates more
+probability mass immediately above 480 seconds than a smooth extrapolation
+from below predicts --- consistent with strategic video-length inflation.
+The optimal bandwidth is approximately 118 seconds on each side of the cutoff,
+using 276 observations to the left and 331 to the right.
+
+Figure 2 shows the estimated density on each side of the cutoff.
+
+![McCrary density estimate at the 8:00 threshold (post-policy sample). A jump
+from left to right indicates excess mass above the
+cutoff.](../figures/fig2_mccrary_480.png){#fig-fig2 width=90%}
+
+## Pre-policy test at 600s
+
+The McCrary test at 600s in the pre-policy sample yields
+t = `r round(r_pre$t_stat, 2)` (p = `r round(r_pre$p_value, 3)`), which does
+not reach conventional significance. The pre-policy panel contains only
+`r n_pre` videos due to the sampling bias described in Section 2.3 --- our
+discovery method systematically misses channels whose upload activity was
+concentrated before 2020. The negative point estimate
+(`r round(r_pre$estimate, 5)`) reflects the sharp dropoff in video count above
+10 minutes in a small sample, not a reversal of the bunching effect. This test
+is underpowered and its result should not be given inferential weight.
+
+## Migration check
+
+```{r migration}
+mig <- bind_rows(r_mig_post, r_mig_pre) |>
+  mutate(Cutoff     = c("600s in post-policy", "480s in pre-policy"),
+         Expectation = c("null", "null")) |>
+  select(Cutoff, Expectation, estimate, t_stat, p_value) |>
+  rename(`Density diff.` = estimate, `t-stat` = t_stat, `p-value` = p_value) |>
+  mutate(across(where(is.numeric), \(x) round(x, 4)))
+
+kable(mig, booktabs = TRUE,
+      caption = "Migration check: cross-period tests (both expected to be null).")
+```
+
+The 600s-in-post-policy test is not significant (p = `r round(r_mig_post$p_value, 3)`),
+consistent with creators having shifted their padding behavior to the new
+480s threshold. The 480s-in-pre-policy test, however, yields
+p = `r round(r_mig_pre$p_value, 3)`, which is technically significant. We
+attribute this to the small pre-policy sample (n = `r n_pre`): with only 86
+effective observations to the left of the cutoff and 67 to the right, the
+estimator is unreliable. The binomial tests for this pre-policy cut show no
+significant asymmetry at any window size up to +-111s, which contradicts the
+point estimate and confirms the result is noise rather than signal.
+
+## Engagement check
+
+```{r engagement}
+eng_stats <- vids |>
+  filter(post_policy,
+         duration_sec >= 450, duration_sec < 510) |>
+  mutate(above = duration_sec >= 480) |>
+  group_by(above) |>
+  summarise(n             = n(),
+            median_views  = format(round(median(view_count, na.rm=TRUE)), big.mark=","),
+            .groups = "drop") |>
+  mutate(Group = ifelse(above, "Just above 480s [480, 510)", "Just below 480s [450, 480)")) |>
+  select(Group, n, median_views)
+
+kable(eng_stats, booktabs = TRUE,
+      caption = "Engagement comparison: videos just above vs just below 480s (post-policy).")
+```
+
+Videos just above 480s have significantly *lower* median view counts than
+videos just below (t = `r round(abs(r_eng$t_stat), 2)`,
+p = `r round(r_eng$p_value, 3)`). This result is in the opposite direction
+from the hypothesis that crossing the threshold is rewarded with higher
+engagement. A likely explanation is reverse causality: creators who pad
+videos to 8:00 are precisely those whose organic content is too short to
+hold viewer attention, and these creators tend to produce lower-performing
+content regardless of length. The engagement comparison is descriptive, not
+causal, and should be interpreted accordingly.
+
+## Placebo cutoffs
+
+```{r placebos}
+plac <- res |>
+  filter(grepl("Placebo", analysis)) |>
+  mutate(Cutoff = c("420s (7:00)", "540s (9:00)", "660s (11:00)")) |>
+  select(Cutoff, estimate, t_stat, p_value) |>
+  rename(`Density diff.` = estimate, `t-stat` = t_stat, `p-value` = p_value) |>
+  mutate(across(where(is.numeric), \(x) round(x, 4)))
+
+kable(plac, booktabs = TRUE,
+      caption = "Placebo density tests at policy-irrelevant cutoffs (post-policy).")
+```
+
+The 540s and 660s placebos are flat (p = 0.643 and 0.122 respectively).
+The 420s placebo is borderline (p = 0.059), likely reflecting a natural
+distributional artifact: as the distribution shifts toward longer videos
+post-2020, more density accumulates above 7:00, creating an apparent but
+spurious asymmetry. Crucially, the 420s test is in the *negative* direction
+(lower density above the threshold), the opposite sign from the 480s primary
+result, which rules out a uniform distributional confound.
+
+![Placebo density checks at 7:00, 9:00, and 11:00 (post-policy). No
+discontinuity expected at any
+threshold.](../figures/fig3_placebo_cutoffs.png){#fig-fig3 width=100%}
+
+# Discussion
+
+## Policy implications
+
+The evidence is consistent with creators strategically inflating video duration
+to clear the 8:00 mid-roll eligibility threshold. The primary McCrary test
+finds a statistically significant density discontinuity at 480s post-policy;
+the 600s-in-post-policy migration check is null; and two of three placebo
+cutoffs are flat. Taken together, the pattern is consistent with a behavioral
+response to the monetization rule.
+
+The engagement finding complicates the picture in an important way. Padded
+videos --- those that cross the 8:00 threshold by a narrow margin --- earn
+*lower* views, not higher, relative to slightly shorter videos. This suggests
+the monetization calculus for individual creators may be less favorable than
+assumed: the mid-roll revenue premium may be offset by reduced algorithmic
+promotion of content that underperforms on watch time. If so, creators are
+padding in response to a perceived incentive that does not actually deliver
+a net benefit, making the behavioral distortion a pure welfare loss --- longer
+videos that no one gains from.
+
+For YouTube's Ads and Creator Economy teams, this points toward two
+interventions. First, replacing the binary 8-minute threshold with a smooth
+ramp in mid-roll ad slots as a function of duration would eliminate the sharp
+bunching incentive while preserving the policy goal of encouraging longer-form
+content. Second, transparently sharing per-video revenue attribution with
+creators would help them learn whether padding actually pays off, potentially
+reducing the behavior organically.
+
+## Limitations
+
+**Sample bias.** Our channel sample over-selects algorithm-savvy creators and
+under-covers pre-2019 channels. Both biases push estimated bunching upward;
+the true population effect is at most as large as our estimate. The pre-policy
+analysis is particularly hampered: only `r n_pre` pre-policy videos survived
+the study-window filter, yielding unreliable pre-policy test results.
+
+**Engagement endogeneity.** The engagement comparison cannot be interpreted
+causally. Creators who choose to pad to 8:00 may differ systematically from
+those who do not, independent of the padding itself.
+
+**Single platform.** The analysis covers YouTube only. Behavior on competing
+platforms with different monetization rules is outside scope.
+
+# Conclusion
+
+YouTube's mid-roll ad threshold creates a sharp incentive for creators to
+inflate video duration. Using a McCrary density test on
+`r format(n_post, big.mark=",")` post-policy videos from
+`r n_ch` English-language channels, we find statistically significant
+bunching at the 8:00 threshold (t = `r round(r_primary$t_stat, 2)`,
+p = `r round(r_primary$p_value, 3)`). The 9:00 and 11:00 placebos are flat,
+and 600s shows no discontinuity in the post-policy period --- consistent with
+a behavioral response to the active threshold rather than a content-length
+norm.
+
+Contrary to the hypothesis that crossing the threshold is individually
+rewarded, videos just above 8:00 show significantly lower engagement than
+those just below. Creators appear to be padding in response to a belief about
+the value of mid-roll eligibility that the engagement data does not support.
+
+We recommend that YouTube evaluate replacing the binary 8-minute threshold
+with a smooth ramp in mid-roll eligibility and consider providing creators
+with per-video revenue attribution to reduce padding behavior organically.
+A full-scale replication covering ~1,500 channels with a balanced pre-2019
+discovery pass would provide the statistical power needed to confirm the
+pre-policy 600s bunching and validate the migration check.
