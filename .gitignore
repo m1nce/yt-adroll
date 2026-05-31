@@ -28,4 +28,4 @@ renv/staging/
 __pycache__/
 *.pyc
 .python-version
-__marimo__/
+__marimo__/Rplots.pdf
