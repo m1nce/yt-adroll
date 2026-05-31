@@ -159,7 +159,13 @@ pull_channel <- function(channel_id) {
     write_parquet(out, cache_file)
     return(out)
   }
-  vids <- get_video_ids(uploads)
+  vids <- tryCatch(
+    get_video_ids(uploads),
+    error = function(e) {
+      message("  (playlist error: ", conditionMessage(e), "; skipping)")
+      character(0)
+    }
+  )
   details <- get_video_details(vids)
   if (nrow(details) > 0) {
     details <- details |>
