@@ -14,6 +14,8 @@
 #   => ~80 units per very-active channel; 30 channels well under daily 10K quota.
 #
 # Auth: reads YOUTUBE_API_KEY from .env (or environment).
+#       For parallel pulls, set KEY_IDX=N in the environment and store keys
+#       as YOUTUBE_API_KEY_1 ... YOUTUBE_API_KEY_N in .env.
 
 suppressPackageStartupMessages({
   library(httr2)
@@ -49,6 +51,13 @@ load_env <- function(path = ".env") {
   }
 }
 load_env()
+
+# If KEY_IDX is set, use YOUTUBE_API_KEY_{KEY_IDX} in preference to YOUTUBE_API_KEY.
+key_idx <- Sys.getenv("KEY_IDX", "")
+if (nzchar(key_idx)) {
+  override <- Sys.getenv(paste0("YOUTUBE_API_KEY_", key_idx), "")
+  if (nzchar(override)) Sys.setenv(YOUTUBE_API_KEY = override)
+}
 
 api_key <- Sys.getenv("YOUTUBE_API_KEY")
 if (!nzchar(api_key)) {
