@@ -8,8 +8,8 @@
 # filters to the 10K-1M subscriber band. Gaming and Sports get multiple
 # queries to widen the candidate pool for those categories.
 #
-# Quota: ~12 search.list calls (100 units each) + ~3-6 channels.list batch
-# calls (1 unit each) = ~1,205 units. Leaves ~8,800 units for the rest of
+# Quota: ~28 search.list calls (100 units each) + ~6-12 channels.list batch
+# calls (1 unit each) = ~2,812 units. Leaves ~7,200 units for the rest of
 # the day.
 #
 # Output: data/channels_seeds.csv  (handle_or_url, primary_category)
@@ -50,8 +50,17 @@ CATEGORIES <- tribble(
   "22",         "People & Blogs",   "storytime",
   "22",         "People & Blogs",   "day in the life",
   "27",         "Education",        "tutorial",
+  "27",         "Education",        "explainer",
+  "27",         "Education",        "learn",
+  "27",         "Education",        "science explained",
   "26",         "Howto & Style",    "how to",
+  "26",         "Howto & Style",    "DIY",
+  "26",         "Howto & Style",    "tips",
+  "26",         "Howto & Style",    "beauty tutorial",
   "24",         "Entertainment",    "review",
+  "24",         "Entertainment",    "challenge",
+  "24",         "Entertainment",    "reaction",
+  "24",         "Entertainment",    "funny",
   "23",         "Comedy",           "comedy",
   "23",         "Comedy",           "sketch comedy",
   "23",         "Comedy",           "standup",
